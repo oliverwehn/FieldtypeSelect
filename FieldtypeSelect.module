@@ -1,0 +1,302 @@
+<?php
+
+/**
+ * ProcessWire Page Fieldtype
+ *
+ * Alternate select field to offer a defined group of options to select from. 
+ *
+ * For documentation about the fields used in this class, please see:  
+ * /wire/core/Fieldtype.php
+ * /wire/core/FieldtypeMulti.php
+ * 
+ * ProcessWire 2.x 
+ * Copyright (C) 2011 by Oliver Wehn 
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ * 
+ * http://www.processwire.com
+ * http://www.oliverwehn.com
+ *
+ */
+
+class FieldtypeSelect extends FieldtypePage {
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => __('Select Field'),
+			'version' => 010,
+			'summary' => __('Saves a selected option from a given set'),
+			'permanent' => true, 
+			);
+	}
+
+	/**	
+	 * Setup a hook to Pages::delete so that we can remove references when pages are deleted
+	 *
+	 */
+	public function init() {
+        // sets hook for adding options tab to field edit form
+        $this->addHookAfter("ProcessField::buildEditForm", $this, 'extendBuildEditForm');
+		parent::init();		
+	}
+	
+	/**
+	 * Return an InputfieldPage of the type configured
+	 *
+	 */
+	public function getInputfield(Page $page, Field $field) {
+		$inputfield = $this->fuel('modules')->get("InputfieldSelect"); 
+		$inputfield->class = $this->className();
+		$inputfield->required = 1;
+		$options = $this->fuel('pages')->get('name='.$field->name.', template=select_field')->children();
+		foreach($options as $o) {
+			$inputfield->addOption($o->id, $o->title, $o->get('select_field_option_value') == $page->get($field->name)?array('selected'=>1):null);
+		}
+		return $inputfield; 
+	}	
+
+	public function ___createField(Field $field) {
+		if($result = parent::___createField($field)) {
+			$select = new Page($this->templates->get('select_field'));
+			$select->parent = $this->pages->get($this->pages->get($this->config->adminRootPageID)->path.'setup/field/');
+			$select->name = $field->name;
+			$select->title = "Select Field: ".$select->name;
+			$select->set('process', $this->modules->get('ProcessFieldtypeSelectOptions'));			
+			$select->save();
+			return true;
+		} else {
+			return $result;
+		}
+	}
+
+	/**
+	 * Sanitize value for storage
+	 *
+	 */
+	public function sanitizeValue(Page $page, Field $field, $value) {
+		if(is_array($value)) {
+				
+		} else {
+			
+		} 
+		return $value;
+	}
+        /**
+         * Given a raw value (value as stored in DB), return the value as it would appear in a Page object
+	 *
+         * @param Page $page
+         * @param Field $field
+         * @param string|int|array $value
+         * @return string
+         *
+         */
+        public function ___wakeupValue(Page $page, Field $field, $value) {
+			if(is_array($value)) {
+				$wakeupValue = array();
+				foreach($value as $v) {
+					if(is_numeric($v) && $option = $this->pages->get($v)) {
+						$wakeupValue[] = $option->get('select_field_option_value');
+					}
+				}
+				if($field->derefAsPage > 0) {
+					$wakeupValue = $wakeupValue[0]; 
+				}
+			} else {
+				if(is_numeric($value)) {
+					if($field->derefAsPageArray > 0) {
+						$wakeupValue = array($this->pages->get($value)->get('select_field_option_value'));
+					} else { 
+						$wakeupValue = $this->pages->get($value)->get('select_field_option_value');
+					}
+				} else {
+					return NULL;
+				}
+			}
+        	return $wakeupValue;
+        }
+
+        /**
+         * Given an 'awake' value, as set by wakeupValue, convert the value back to a basic type for storage in DB. 
+         *              
+         * @param Page $page
+         * @param Field $field
+         * @param string|int|array|object $value
+         * @return string|int
+         *
+         */
+        public function ___sleepValue(Page $page, Field $field, $value) { 
+			if(is_numeric($value)) {
+				$sleepValue = array($value);
+			}        	
+        	if(is_array($value)) {
+        		$sleepValue = array();
+				foreach($value as $v) {
+					if(is_numeric($v)) {
+						$sleepValue[] = $v;
+					}
+				}
+        	}
+			if($value instanceof PageArray) { 
+				$sleepValue = array();
+				foreach($value as $p) {
+					$sleepValue[] = $p->id;
+				}
+			}
+			if($value instanceof Page) {
+				$sleepValue = array($value->id);
+			}
+		
+			return $sleepValue;
+        }
+	
+	
+	public function ___loadPageField(Page $page, Field $field) {
+		//$option = $this->pages->get($field->value);
+		return parent::___loadPageField($page, $field);
+		
+		if($option !== null) {
+			return $option->get('select_field_option');
+		} else {
+			return false;
+		}
+	}
+
+
+	public function ___getConfigInputfields(Field $field) {
+		$inputfields = new InputfieldWrapper();
+
+		$tab = new InputfieldWrapper();
+		$tab->attr('id', 'options');
+		$tab->attr('class', 'WireTab');
+		$tab->head = $this->_('Manage Select Options');
+		$tab->attr('title', $this->_('Options'));
+		
+        $f = $this->modules->get("InputfieldMarkup"); 
+        $f->label = $this->_("Select Field Options");
+		$f->value = "";
+		$process = $this->modules->get('ProcessFieldtypeSelectOptions');
+		$f->value = $process->execute();
+		$tab->append($f);	
+		$inputfields->append($tab);
+		
+		$tab = parent::___getConfigInputfields($field);
+		$tab->remove($tab->get('derefAsPage'));
+		$select = $this->modules->get("InputfieldRadios"); 
+		$select->attr('name', 'derefAsPage'); 
+		$select->label = $this->_('Dereference in API as');
+		$select->description = "".
+			$this->_("If your field will contain multiple options, then you should select the first option (PageArray). ") . 
+			$this->_("If your field only needs to store a single option, then select the single option option.");
+		$select->addOption(FieldtypePage::derefAsPageArray, $this->_('Multiple options (PageArray)')); 
+		$select->addOption(FieldtypePage::derefAsPageOrFalse, $this->_('Single option (Page) or boolean false when none selected')); 
+
+		$select->attr('value', (int) $field->derefAsPage);  
+		$tab->append($select);
+		$inputfields->append($tab);
+	
+		return $inputfields;
+	}
+	
+	
+	public function ___install() {
+		if($admin = $this->pages->get($this->pages->get($this->config->adminRootPageID)->path.'setup/field/')) {
+			/*
+	        $template = new Template();
+			$template->name = 'select_fields';
+			$template->noChangeTemplate = 1;
+			$template->noMove = 1; 
+			$template->nameContentTab = 1; 
+			$template->flags = Template::flagSystem; 			
+			// create field group
+			$fieldgroup = new Fieldgroup(); 
+			$fieldgroup->name = $template->name;
+			// add field for title and save
+			$field = $this->fields->get('title');
+			$fieldgroup->add($field);
+			$fieldgroup->save();
+			$template->fieldgroup = $fieldgroup;
+			$template->parentTemplates = array($admin->template->id);
+			$template->save();
+			
+			$this->message("Created template: select_fields"); 
+			
+			
+			$template_select = new Template();
+			$template_select->name = 'select_field';
+			$template_select->parentTemplates = array($template->id);
+			$template_select->noChangeTemplate = 1;
+						
+			$fieldgroup = new FieldGroup();
+			$fieldgroup->name = $template_select->name;
+			// add field for title and save
+			$field = $this->fields->get('title');
+			$fieldgroup->add($field);
+			$field = $this->fields->get('process');
+			$fieldgroup->add($field);
+			$fieldgroup->save();
+			$template_select->fieldgroup = $fieldgroup;
+			$template->childTemplates = array($template_select->id);
+			$template->save();
+			$template_select->save();		
+			$this->message("Created template: select_field");
+			 */
+			$template_select = new Template();
+			$template_select->name = 'select_field';
+			$template->parentTemplates = array($admin->template->id);
+			$template_select->noChangeTemplate = 1;
+						
+			$fieldgroup = new FieldGroup();
+			$fieldgroup->name = $template_select->name;
+			// add field for title and save
+			$field = $this->fields->get('title');
+			$fieldgroup->add($field);
+			$field = $this->fields->get('process');
+			$fieldgroup->add($field);
+			$fieldgroup->save();
+			$template_select->fieldgroup = $fieldgroup;			
+			$template_select->save();		
+			$this->message("Created template: select_field");			
+			
+			$template_option = new Template();
+			$template_option->name = 'select_field_option';
+			$template_option->parentTemplates = array($template_select->id);
+			$template_option->noChildren = 1;
+			$template_option->noChangeTemplate = 1;
+			$fieldgroup = new FieldGroup();
+			$fieldgroup->name = $template_option->name;
+			// add field for title and save
+			$field = $this->fields->get('title');
+			$fieldgroup->add($field);
+			$field = new Field();
+			$field->name = "select_field_option_value";
+			$field->label = $this->_("Value");
+			$field->set('type', "FieldtypeText");
+			$field->set('description', $this->_("The optionÕs value as it will be available in pages."));
+			$field->save();
+			$this->message("Created field: select_field_option_value");			
+			$fieldgroup->add($field);
+			$fieldgroup->save();
+			$template_option->fieldgroup = $fieldgroup;
+			$template_select->childTemplates = array($template_option->id);
+			$template_select->save();
+			$template_option->save();
+			$this->message("Created template: select_field_option");
+					
+			parent::___install();
+		} else {
+			throw new WireException("WasnÕt able to install Fieldtype. WasnÕt able to find /processwire/setup/field/.");
+		}
+	}
+	
+	public function ___uninstall() {
+		$this->pages->find('template=select_field_option')->delete();
+		$this->pages->find('template=select_field')->delete();
+		$this->templates->get('select_field')->delete();
+		$this->templates->get('select_field_options')->delete();
+		$this->fields->get('select_field_option_value')->delete();
+		parent::___uninstall();
+	}
+	
+	
+	
+}
+
